@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>문의함 | 무인문구 관리자</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root { --night: #1f1736; --gold: #d8b46a; --pearl: #f4f3f8; --ink: #1e1b26; --muted: #5d5869; --line: #dcd9e4; --new: #3b4cca; --done: #2f8f84; }
+  [hidden] { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--pearl); color: var(--ink); font: 400 16px/1.6 "IBM Plex Sans KR", system-ui, sans-serif; }
+  :focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  header { background: var(--night); color: #fff; padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  header b { font-family: "Noto Serif KR", serif; font-size: 18px; }
+  header button { background: transparent; color: rgba(255,255,255,.8); border: 1px solid rgba(255,255,255,.3); border-radius: 999px; padding: 8px 16px; font: inherit; font-size: 14px; cursor: pointer; }
+  main { width: min(760px, 100% - 32px); margin: 24px auto 60px; }
+
+  .login { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 28px 22px; margin-top: 10vh; }
+  .login h1 { margin: 0 0 16px; font-family: "Noto Serif KR", serif; font-size: 22px; }
+  .login input { width: 100%; font: inherit; font-size: 17px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; }
+  .login button, .primary { margin-top: 12px; width: 100%; min-height: 50px; border: 0; border-radius: 12px; background: var(--night); color: #fff; font-family: inherit; font-weight: 600; font-size: 17px; cursor: pointer; }
+  .err { color: #b3261e; margin: 10px 0 0; min-height: 1.6em; }
+
+  .count { background: var(--night); color: #fff; border-radius: 18px; padding: 20px 22px; display: flex; align-items: baseline; gap: 12px; }
+  .count strong { font-family: "Noto Serif KR", serif; font-size: 44px; line-height: 1; color: var(--gold); }
+  .bar { display: flex; justify-content: space-between; align-items: center; margin: 22px 0 10px; color: var(--muted); font-size: 14px; }
+  .bar button { background: none; border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font: inherit; cursor: pointer; }
+
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-bottom: 12px; }
+  .card.is-new { border-left: 5px solid var(--new); }
+  .meta { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 14px; }
+  .name { font-weight: 600; font-size: 18px; margin: 6px 0 2px; }
+  .contact { font-size: 17px; background: none; border: 0; padding: 4px 0; color: var(--new); text-decoration: underline; cursor: pointer; font-family: inherit; }
+  .text { margin: 10px 0 0; white-space: pre-wrap; word-break: break-word; }
+  .status { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+  .status button { min-height: 46px; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-family: inherit; font-weight: 500; font-size: 15px; cursor: pointer; }
+  .status button[aria-pressed="true"] { background: var(--night); color: #fff; border-color: var(--night); }
+  .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <b>무인문구 문의함</b>
+  <button id="logout" hidden type="button">잠그기</button>
+</header>
+<main>
+  <form class="login" id="loginForm">
+    <h1>관리자 비밀번호</h1>
+    <label for="pw" class="sr">비밀번호</label>
+    <input id="pw" type="password" autocomplete="current-password" required autofocus>
+    <button type="submit">열기</button>
+    <p class="err" id="loginErr" role="alert"></p>
+  </form>
+
+  <section id="box" hidden>
+    <div class="count"><strong id="newCount">0</strong><span>건의 새 문의</span></div>
+    <div class="bar"><span id="total"></span><button type="button" id="reload">새로고침</button></div>
+    <p class="err" id="boxErr" role="alert"></p>
+    <div id="list"></div>
+  </section>
+</main>
+<script>
+  var KEY = 'mooin-admin-pw';
+  var STATUSES = ['새 문의', '연락함', '완료'];
+  var $ = function (id) { return document.getElementById(id); };
+  var pw = function () { try { return sessionStorage.getItem(KEY) || ''; } catch (e) { return ''; } };
+
+  async function call(method, body) {
+    var r = await fetch('/api/admin', {
+      method: method,
+      headers: Object.assign({ 'x-admin-password': pw() }, body ? { 'Content-Type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined
+    });
+    var j = await r.json().catch(function () { return {}; });
+    if (r.status === 401) { lock('비밀번호가 맞지 않아요.'); throw new Error(''); }
+    if (!r.ok) throw new Error(j.error || '불러오지 못했어요.');
+    return j;
+  }
+
+  function lock(message) {
+    try { sessionStorage.removeItem(KEY); } catch (e) {}
+    $('box').hidden = true; $('logout').hidden = true; $('loginForm').hidden = false;
+    $('loginErr').textContent = message || '';
+    $('pw').value = ''; $('pw').focus();
+  }
+
+  function fmt(iso) {
+    var d = new Date(iso);
+    return d.toLocaleString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function render(rows) {
+    var list = $('list'); list.innerHTML = '';
+    $('newCount').textContent = rows.filter(function (r) { return r.status === '새 문의'; }).length;
+    $('total').textContent = '모두 ' + rows.length + '건 · 최신순';
+    if (!rows.length) { list.innerHTML = '<p class="empty">아직 들어온 문의가 없어요.</p>'; return; }
+    rows.forEach(function (row) {
+      var c = document.createElement('article');
+      c.className = 'card' + (row.status === '새 문의' ? ' is-new' : '');
+      var meta = document.createElement('div'); meta.className = 'meta';
+      var when = document.createElement('span'); when.textContent = fmt(row.created_at);
+      var st = document.createElement('span'); st.textContent = row.status;
+      meta.append(when, st);
+      var name = document.createElement('div'); name.className = 'name'; name.textContent = row.name;
+      var contact = document.createElement('button'); contact.type = 'button'; contact.className = 'contact'; contact.textContent = row.contact;
+      contact.title = '눌러서 복사';
+      contact.onclick = function () {
+        navigator.clipboard.writeText(row.contact).then(function () { contact.textContent = row.contact + ' (복사됨)'; setTimeout(function () { contact.textContent = row.contact; }, 1500); })
+          .catch(function () { var s = getSelection(), rg = document.createRange(); rg.selectNodeContents(contact); s.removeAllRanges(); s.addRange(rg); });
+      };
+      var text = document.createElement('p'); text.className = 'text'; text.textContent = row.message || '(내용 없음)';
+      var status = document.createElement('div'); status.className = 'status';
+      STATUSES.forEach(function (s) {
+        var b = document.createElement('button'); b.type = 'button'; b.textContent = s;
+        b.setAttribute('aria-pressed', String(row.status === s));
+        b.onclick = async function () {
+          if (row.status === s) return;
+          try { await call('PATCH', { id: row.id, status: s }); await load(); }
+          catch (e) { if (e.message) $('boxErr').textContent = e.message; }
+        };
+        status.append(b);
+      });
+      c.append(meta, name, contact, text, status);
+      list.append(c);
+    });
+  }
+
+  async function load() {
+    $('boxErr').textContent = '';
+    var j = await call('GET');
+    $('loginForm').hidden = true; $('box').hidden = false; $('logout').hidden = false;
+    render(j.rows || []);
+  }
+
+  $('loginForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    $('loginErr').textContent = '';
+    try { sessionStorage.setItem(KEY, $('pw').value); } catch (err) {}
+    try { await load(); } catch (err) { if (err.message) lock(err.message); }
+  });
+  $('reload').onclick = function () { load().catch(function (e) { if (e.message) $('boxErr').textContent = e.message; }); };
+  $('logout').onclick = function () { lock(''); };
+  if (pw()) load().catch(function (e) { if (e.message) lock(e.message); });
+</script>
+</body>
+</html>
