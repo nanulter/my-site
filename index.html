@@ -300,7 +300,7 @@
           </div>
           <label class="agree">
             <input type="checkbox" name="consent" required>
-            <span>[필수] 개인정보 수집·이용에 동의해요. 수집 항목: 이름, 연락처, 문의 내용 · 목적: 교재 구매 문의 답변 · 보관 기간: 문의 처리 후 1년</span>
+            <span>[필수] 개인정보 수집·이용에 동의해요. 수집 항목: 이름, 연락처, 문의 내용, 사이트에 들어온 경로 ·목적: 교재 구매 문의 답변 · 보관 기간: 문의 처리 후 1년</span>
           </label>
           <div>
             <button class="btn btn-gold" type="submit">교재 구매 문의 보내기</button>
@@ -336,6 +336,34 @@
     }
   })();
 
+  // 유입 경로 기억하기: UTM 링크로 오면 그 값을, 아니면 처음 들어온 바깥 사이트 주소를 30일 동안 기억한다.
+  var Visit = (function () {
+    var KEY = 'mooin-visit', DAYS = 30;
+    function read() {
+      try {
+        var v = JSON.parse(localStorage.getItem(KEY) || 'null');
+        if (v && Date.now() - v.at < DAYS * 864e5) return v;
+      } catch (e) {}
+      return null;
+    }
+    function save(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} }
+    var q = new URLSearchParams(location.search);
+    var ref = '';
+    try { if (document.referrer && new URL(document.referrer).host !== location.host) ref = document.referrer; } catch (e) {}
+    var now = {
+      utm_source: q.get('utm_source') || '',
+      utm_medium: q.get('utm_medium') || '',
+      utm_campaign: q.get('utm_campaign') || '',
+      referrer: ref,
+      landing: location.pathname + location.search,
+      at: Date.now()
+    };
+    var kept = read();
+    if (now.utm_source || now.utm_medium || now.utm_campaign) save(now);   // 새 UTM 링크는 늘 덮어쓴다
+    else if (!kept && ref) save(now);                                      // UTM 없이 바깥에서 처음 온 경우
+    return { get: function () { return read() || now; } };
+  })();
+
   // 문의 보내기
   (function () {
     var form = document.getElementById('inquiry');
@@ -351,6 +379,9 @@
         website: form.website.value,
         consent: form.consent.checked
       };
+      var v = Visit.get();
+      data.utm_source = v.utm_source; data.utm_medium = v.utm_medium; data.utm_campaign = v.utm_campaign;
+      data.referrer = v.referrer; data.landing = v.landing;
       if (!data.name || !data.contact) { msg.className = 'msg err'; msg.textContent = '이름과 연락처를 적어 주세요.'; return; }
       if (!data.consent) { msg.className = 'msg err'; msg.textContent = '개인정보 수집·이용에 동의해 주세요.'; return; }
       btn.disabled = true; btn.textContent = '보내는 중…';

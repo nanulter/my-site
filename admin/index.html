@@ -41,6 +41,22 @@
   .status button { min-height: 46px; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-family: inherit; font-weight: 500; font-size: 15px; cursor: pointer; }
   .status button[aria-pressed="true"] { background: var(--night); color: #fff; border-color: var(--night); }
   .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+
+  /* 유입 채널 */
+  .panel { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-top: 14px; }
+  .panel h2 { margin: 0 0 12px; font-family: "Noto Serif KR", serif; font-size: 18px; font-weight: 500; }
+  .ch { display: grid; grid-template-columns: 7.5em 1fr 2.5em; align-items: center; gap: 10px; font-size: 15px; margin: 8px 0; }
+  .ch i { display: block; height: 12px; border-radius: 6px; background: var(--new); min-width: 4px; }
+  .ch b { text-align: right; font-weight: 600; }
+  .src { display: inline-block; margin-top: 8px; font-size: 13px; color: var(--muted); background: var(--pearl); border-radius: 999px; padding: 3px 10px; }
+  details.links summary { cursor: pointer; font-family: "Noto Serif KR", serif; font-size: 18px; }
+  .links p { color: var(--muted); font-size: 14px; margin: 10px 0; }
+  .links label { display: grid; gap: 6px; font-size: 14px; margin: 10px 0; }
+  .links input { font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+  .link-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin: 8px 0; }
+  .link-row div { font-size: 14px; }
+  .link-row code { display: block; font-size: 12px; color: var(--muted); word-break: break-all; }
+  .link-row button { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 10px 14px; font-family: inherit; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -59,6 +75,20 @@
 
   <section id="box" hidden>
     <div class="count"><strong id="newCount">0</strong><span>건의 새 문의</span></div>
+    <div class="panel">
+      <h2>어디서 와서 문의했나요</h2>
+      <div id="channels"></div>
+    </div>
+    <div class="panel">
+      <details class="links">
+        <summary>유입 추적 링크 만들기</summary>
+        <p>인스타·블로그·맘카페·단톡방에 사이트 주소 대신 아래 링크를 올리면, 그 링크로 와서 남긴 문의에 채널 이름이 붙어요.</p>
+        <label>이벤트·글 이름 (선택, 영어·숫자 권장)
+          <input id="campaign" placeholder="예: 3grade-kit, nov-event" maxlength="40">
+        </label>
+        <div id="linkList"></div>
+      </details>
+    </div>
     <div class="bar"><span id="total"></span><button type="button" id="reload">새로고침</button></div>
     <p class="err" id="boxErr" role="alert"></p>
     <div id="list"></div>
@@ -94,7 +124,75 @@
     return d.toLocaleString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
   }
 
+  // ---------- 유입 채널 ----------
+  var PRESETS = [
+    { label: '인스타그램', source: 'instagram', medium: 'social' },
+    { label: '블로그', source: 'blog', medium: 'social' },
+    { label: '맘카페', source: 'momcafe', medium: 'community' },
+    { label: '카카오톡 단톡방', source: 'kakao', medium: 'messenger' },
+    { label: '매장·명함 QR', source: 'qr', medium: 'offline' }
+  ];
+  var SOURCE_NAMES = {};
+  PRESETS.forEach(function (p) { SOURCE_NAMES[p.source] = p.label; });
+  Object.assign(SOURCE_NAMES, { ig: '인스타그램', naver_blog: '블로그', cafe: '맘카페', naver: '네이버 검색', google: '구글 검색' });
+
+  function hostOf(u) { try { return new URL(u).host.replace(/^www\.|^m\./, ''); } catch (e) { return ''; } }
+  function channel(row) {
+    if (row.utm_source) return SOURCE_NAMES[row.utm_source.toLowerCase()] || row.utm_source;
+    var h = hostOf(row.referrer || '');
+    if (h) {
+      if (/instagram\.com$/.test(h)) return '인스타그램';
+      if (/^blog\.naver\.com$|tistory\.com$|blog\.daum\.net$/.test(h)) return '블로그';
+      if (/^cafe\.(naver\.com|daum\.net)$/.test(h)) return '맘카페';
+      if (/kakao/.test(h)) return '카카오톡 단톡방';
+      if (/naver\.com$/.test(h)) return '네이버 검색';
+      if (/google\./.test(h)) return '구글 검색';
+      if (/daum\.net$|bing\.com$/.test(h)) return '검색(기타)';
+      return h;
+    }
+    if (row.landing == null && !row.utm_source) return '추적 시작 전';
+    return '직접 방문';
+  }
+
+  function renderChannels(rows) {
+    var box = $('channels'); box.innerHTML = '';
+    var counts = {};
+    rows.forEach(function (r) { var c = channel(r); counts[c] = (counts[c] || 0) + 1; });
+    var items = Object.keys(counts).map(function (k) { return [k, counts[k]]; }).sort(function (a, b) { return b[1] - a[1]; });
+    if (!items.length) { box.textContent = '아직 문의가 없어요.'; return; }
+    var max = items[0][1];
+    items.forEach(function (it) {
+      var row = document.createElement('div'); row.className = 'ch';
+      var name = document.createElement('span'); name.textContent = it[0];
+      var bar = document.createElement('span'); var fill = document.createElement('i'); fill.style.width = (it[1] / max * 100) + '%'; bar.append(fill);
+      var n = document.createElement('b'); n.textContent = it[1] + '건';
+      row.append(name, bar, n); box.append(row);
+    });
+  }
+
+  function renderLinks() {
+    var box = $('linkList'); box.innerHTML = '';
+    var camp = $('campaign').value.trim().replace(/\s+/g, '-');
+    PRESETS.forEach(function (p) {
+      var q = new URLSearchParams({ utm_source: p.source, utm_medium: p.medium });
+      if (camp) q.set('utm_campaign', camp);
+      var url = location.origin + '/?' + q.toString();
+      var row = document.createElement('div'); row.className = 'link-row';
+      var t = document.createElement('div'); t.textContent = p.label;
+      var code = document.createElement('code'); code.textContent = url; t.append(code);
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = '복사';
+      b.onclick = function () {
+        navigator.clipboard.writeText(url).then(function () { b.textContent = '복사됨'; setTimeout(function () { b.textContent = '복사'; }, 1500); })
+          .catch(function () { var s = getSelection(), rg = document.createRange(); rg.selectNodeContents(code); s.removeAllRanges(); s.addRange(rg); });
+      };
+      row.append(t, b); box.append(row);
+    });
+  }
+  $('campaign').addEventListener('input', renderLinks);
+  renderLinks();
+
   function render(rows) {
+    renderChannels(rows);
     var list = $('list'); list.innerHTML = '';
     $('newCount').textContent = rows.filter(function (r) { return r.status === '새 문의'; }).length;
     $('total').textContent = '모두 ' + rows.length + '건 · 최신순';
@@ -125,7 +223,10 @@
         };
         status.append(b);
       });
-      c.append(meta, name, contact, text, status);
+      var src = document.createElement('span'); src.className = 'src';
+      src.textContent = '유입: ' + channel(row) + (row.utm_campaign ? ' · ' + row.utm_campaign : '');
+      if (row.referrer) src.title = row.referrer;
+      c.append(meta, name, contact, text, src, status);
       list.append(c);
     });
   }
